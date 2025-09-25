@@ -1,0 +1,6 @@
+The main idea of using dictVectorizer class in scikit-learn :
+_ to convert dict in python to array 
+_ or to convert feature data stored as Python dictionaries into a numerical format that machine learning models can understand.
+
+_ It transforms a list of dictionaries to a sparse matrix or dense array.
+
