@@ -1,0 +1,6 @@
+    Keywords:
+    
+_ sparse matrix: is a matrix where most of the elements are zero, and it stores only the non-zero values along with their positions.
+_ Dense matrix: is a regular matrix where most of the elements are non-zero. It stores all values explicitly, including zeros.
+_ one-hot encoding: is a method to convert categorical data (like words, labels, or tags) 
+into a numerical format that machine learning models can understand.

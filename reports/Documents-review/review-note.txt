@@ -1,0 +1,37 @@
+Date: 26 / 09 / 2025
+=====================
+🛠 How to Read and Extract Ideas from These Recent Works:
+
+    1. Start with Abstract + Introduction + Contributions
+        _ Write down: What is the new idea or improvement?
+        _ What problem does it address that earlier systems didn’t?
+    2. Look for Architecture Diagrams
+        _ They often show modules like “Retriever”, “Generator / Reader”, “Verification / Explainability”, “Fusion / Aggregation.”
+        _ Compare their architecture modules with yours — note extra modules they add, or simplify.
+    3.Read Method / Model Sections Closely
+        _ Focus particularly on retrieval techniques, reasoning / multi-hop modules, fusion of context, visual / layout modeling, explainability.
+        _ Mark parts you don’t fully understand yet; sometimes you can skip deep math but understand the mechanism in words.
+    4. Evaluation / Experiments
+        _ See which datasets they use (e.g. DocHop-QA).
+        _ What metrics do they report? (Accuracy, F1, latency, interpretability)
+        _ Compare  performance of baseline vs their method, especially in “hard” cases (multi-hop, ambiguous queries).
+    5. Ablation Studies and Error Analysis
+        _ See which components contribute the most.
+        _ See failure cases: what do they struggle with?
+        _ That gives you ideas for what your system might struggle with and what to plan for in future.
+    6.Limitations / Future Work
+        _ Authors often admit what they couldn’t solve — use those as “inspiration” or “caution” for planning your project.
+        _ Mark which of their future work align with your Phase 2 ideas.
+    7. Take Notes & Compare
+        + For each paper, write:
+        – Novel idea / contribution
+        – What they do better than older systems
+        – What they leave as challenge / future
+        – Which parts you can adopt in your project now / later
++ What the system is, why they built it, and what it achieved.
++ “What problem do they solve? How?”
+------------------------------------------------------------------------------------------------------------------------------------------------
+For DocHop-QA: Towards Multi-Hop Reasoning over Multimodal Document Collections :
+    + The new idea and improvement:
+        - new idea:
+            _
