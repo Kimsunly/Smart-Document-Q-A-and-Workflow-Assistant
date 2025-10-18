@@ -32,6 +32,65 @@ Date: 26 / 09 / 2025
 + “What problem do they solve? How?”
 ------------------------------------------------------------------------------------------------------------------------------------------------
 For DocHop-QA: Towards Multi-Hop Reasoning over Multimodal Document Collections :
-    + The new idea and improvement:
-        - new idea:
-            _
+    + Keywords:
+    _ Multi-hop reasoning is a type of logical thinking used in AI and human problem-solving where multiple pieces
+    of information (or "hops") are combined across different sources or steps to reach a final answer or conclusion.
+    _ Unimodal involves only one type of data or one mode of information. In this case, the mode is text
+    
+    1. The new idea and improvement:
+        _ DocHop-QA introduces a large-scale benchmark for multi-hop question answering (QA) over multimodal scientific documents (text, tables, layout).
+        _ It supports open-ended reasoning across multiple documents without relying on hyperlinks or shallow reasoning paths.
+    + problem:
+        _ Existing QA datasets (e.g., HotpotQA, MuSiQue) are:
+            > Limited to Wikipedia and plain text.
+            > Focused on single-hop or short answers.
+            > Lack real-world complexity, multimodal content, and layout awareness.
+    +🏆 Key Contributions:       
+    _ dataset of 11,379 QA instances from PubMed articles.
+    _ Covers 11 scientific reasoning concepts (e.g., Problem→Solution, Mechanism→Effect).
+    _ Supports multi-hop, multimodal, and layout-aware reasoning.
+    _ Evaluated across 4 QA tasks: structured prediction, generative answering, multimodal integration.
+
+    2. Architecture Diagrams
+    + 📊 Modules Identified:
+    _ Retriever: Uses TF-IDF + BERTScore to find relevant snippets.
+    _ Generator: LLMs (e.g., Qwen2-Instruct) generate questions and answers.
+    _ Fusion / Aggregation: Combines snippets from multiple documents.
+    _ Layout-aware modeling: Uses LayoutLMv3, LayoutXLM for spatial understanding.
+
+    3.3. Method / Model Sections:
+    🔍 Retrieval Techniques
+        _ Fan-hop: Aggregates semantically related snippets.
+        _ Chain-hop: Links structured (tables) and unstructured (text) content.
+
+    🧠 Reasoning Modules
+        _ Uses semantic scaffolds (e.g., Problem→Solution→Effect).
+        _ Fine-tunes LLMs with LoRA for efficient training.
+
+    🧩 Fusion of Context
+        _ Combines snippets from multiple documents using semantic similarity.
+        _ Table-oriented QA uses deterministic logic + keyword filtering.
+
+    🖼️ Visual/Layout Modeling
+        _ Uses OCR and bounding boxes.
+        _ Models like LayoutLMv3 and LayoutXLM for spatial reasoning.
+
+    ❓ Explainability
+        _ Evaluation includes snippet-level accuracy and completeness.
+        _ Human annotators provide feedback on answer quality.
+
+    => Plan for our project after reading this document:
+    _ Long-context handling
+    _ Layout-aware retrieval
+    _ Prompt optimization
+
+    => 🔗 Alignment with Your Phase 2:
+    + You can explore:
+        _ Workflow automation using layout-aware models.
+        _ Explainable QA with reasoning chains.
+        _ Domain adaptation to legal, educational, or enterprise documents.
+        
+    -> building a Smart-Document-Q-A-and-Workflow-Assistant, layout-aware synthesis can:
+    -Help extract structured data from PDFs or scanned documents.
+    -Improve Q&A accuracy by understanding document sections.
+    -Enable better summarization and evidence mapping.
