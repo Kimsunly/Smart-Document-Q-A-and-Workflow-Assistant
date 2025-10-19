@@ -94,3 +94,89 @@ For DocHop-QA: Towards Multi-Hop Reasoning over Multimodal Document Collections 
     -Help extract structured data from PDFs or scanned documents.
     -Improve Q&A accuracy by understanding document sections.
     -Enable better summarization and evidence mapping.
+
+------------------------------------------------------------------------------------------------------------------------------------------------
+Date: 19 / 10 / 2025;
+For: Enhancing Document-Level Question Answering via Multi-Hop Retrieval-Augmented Generation with LLaMA 
+1. Abstract + Introduction + Contributions
+🆕 Novel Idea / Improvement:
+_ Introduces FinLLaMA-RAG, a multi-hop Retrieval-Augmented Generation (RAG) system built on LLaMA 3.
+_ Combines dense retrieval, context fusion, and multi-hop reasoning with a joint optimization loss to improve both retrieval and generation.
+🧩 Problem Addressed:
+_ Existing RAG models struggle with multi-hop reasoning and context fusion across long, structured documents.
+_ Especially problematic in financial QA, where answers span multiple linked documents.
+
+
+2. Architecture Diagrams
+📊 Key Modules (Fig. 1 & 2):
+
+Query Embedding Module: Embeds query using LLaMA 3.
+Document Retrieval Module: Retrieves top-k chunks via cosine similarity.
+Contextual Fusion Layer: Aggregates chunks using attention weights.
+Multi-Hop Reasoning Module: Iteratively refines context across hops.
+Generation Module: Produces final answer using LLaMA 3.
+Loss Function: Combines retrieval and generation losses.
+
+🔍 Comparison Tip:
+
+If your system uses basic retrieval + generation, consider adding multi-hop reasoning and context fusion layers.
+Their use of joint loss is a good idea to balance retrieval and generation quality.
+
+
+3. Method / Model Sections
+🔍 Focus Areas:
+
+Retrieval: Dense vector embeddings + cosine similarity.
+Reasoning: Multi-hop updates using LLaMA 3.
+Fusion: Attention-based aggregation of document chunks.
+Explainability: Embedding visualizations (PCA), re-ranking scores.
+Preprocessing: Tokenization, embedding, and indexing.
+
+❓ Mark for Review:
+
+The multi-hop reasoning equations and loss function may need deeper study if you're unfamiliar with attention-weighted fusion or joint optimization.
+
+
+4. Evaluation / Experiments
+📚 Datasets Used:
+
+FinDER, FinQABench, FinanceBench, TATQA, FinQA.
+
+📏 Metrics Reported:
+
+nDCG@10 (retrieval ranking)
+BLEU, ROUGE-L, F1 (generation quality)
+
+📈 Performance:
+
+FinLLaMA-RAG outperforms BERT, FinBERT, GPT-3, and traditional RAG across all metrics.
+Ablation shows that removing retrieval or generation components significantly reduces performance.
+
+
+5. Ablation Studies and Error Analysis
+🔍 Key Findings:
+
+Retrieval-only and generation-only models perform worse.
+Multi-hop reasoning and fusion are critical for performance.
+Re-ranking improves retrieval precision.
+
+💡 Inspiration:
+
+Consider adding re-ranking and multi-hop fusion to your system.
+Use ablation to test which modules contribute most to performance.
+
+
+6. Limitations / Future Work
+⚠️ Limitations:
+
+Focused on financial QA; may need adaptation for other domains.
+No mention of latency or real-time performance.
+
+🚀 Future Work Ideas:
+
+Apply FinLLaMA-RAG to tax strategy, fraud detection, and compliance.
+Extend to interactive assistants for SMEs and individuals.
+
+🎯 Alignment with Your Phase 2:
+
+If your project involves document Q&A, this system’s multi-hop + fusion + joint loss approach is highly relevant.
