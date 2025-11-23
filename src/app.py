@@ -41,7 +41,7 @@ if uploaded_file is not None:
         st.text_area("Cleaned Text", cleaned_text[:1000], height=200)
 
         # ---- Split Text into Chunks ----
-        chunks = split_text_into_chunks(cleaned_text, chunk_size=100)
+        chunks = split_text_into_chunks(cleaned_text, chunk_size=80)
         st.write(f"📑 Document split into {len(chunks)} chunks")
 
         st.subheader("Preview of first 5 chunks:")
