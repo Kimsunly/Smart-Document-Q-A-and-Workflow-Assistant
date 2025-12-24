@@ -1,0 +1,82 @@
+Phase 2 – Day 1 Report: OCR Basics
+Date: [Insert Today’s Date]
+Project: Smart Document with Workflow
+Phase: 2 – OCR & Preprocessing
+Day: 1
+
+1. Objectives
+
+The main objectives of today were:
+1. Understand what OCR (Optical Character Recognition) is and its role in the Smart Document system.
+2. Install Tesseract OCR and PyTesseract for Python integration.
+3. Test OCR on a sample image to verify text extraction.
+4. Apply basic image preprocessing using OpenCV to improve OCR accuracy.
+
+2. OCR Overview
+
+OCR (Optical Character Recognition) is a technology used to convert text in images or scanned documents into editable and searchable digital text. In the context of the Smart Document project, OCR is crucial for extracting text from uploaded files, including scanned PDFs or photos of documents.
+
+Key Points Learned:
+- OCR is essential for digitizing information from non-digital sources.
+- Accuracy depends on image quality; blurry, noisy, or skewed images can reduce performance.
+- Preprocessing with OpenCV can enhance OCR results by improving image contrast and clarity.
+
+3. Tools and Installation
+
+Tools Used:
+- Tesseract OCR – Open-source OCR engine.
+- PyTesseract – Python wrapper for Tesseract.
+- OpenCV – Library for image processing.
+
+Installation Steps:
+1. Installed Tesseract OCR (UB Mannheim version recommended for Windows).
+2. Verified installation via command line:
+   tesseract --version
+3. Installed Python packages:
+   pip install pytesseract pillow opencv-python
+4. Configured PyTesseract to point to Tesseract installation path:
+   pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+
+4. Hands-On Practice
+
+Step 1: OCR on a simple image
+- Loaded a sample image containing text.
+- Used PyTesseract to extract text.
+- Successfully printed extracted text to the console.
+
+Step 2: Basic Image Preprocessing
+- Converted image to grayscale using OpenCV.
+- Applied thresholding to improve contrast.
+- Reran OCR on preprocessed image.
+- Observed improved recognition accuracy compared to the raw image.
+
+Code Snippet Example:
+import cv2
+from PIL import Image
+import pytesseract
+
+pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+
+# Load and preprocess image
+img = cv2.imread("sample.png")
+gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)[1]
+
+# Save preprocessed image
+cv2.imwrite("cleaned.png", thresh)
+
+# OCR extraction
+text = pytesseract.image_to_string(thresh)
+print(text)
+
+5. Reflection
+- Installation of Tesseract and PyTesseract was successful.
+- Basic OCR works as expected for clean images.
+- Preprocessing significantly improves OCR accuracy.
+- Today’s work sets the foundation for more advanced preprocessing and handling of scanned PDFs in the upcoming days.
+
+6. Next Steps
+- Explore deeper OpenCV preprocessing techniques (deskewing, denoising, blurring) to further improve OCR.
+- Start working with scanned PDFs using pdf2image to convert pages into images.
+
+End of Day 1 – Phase 2 Report
