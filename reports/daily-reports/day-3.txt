@@ -1,0 +1,30 @@
+Day 3 - OCR Preprocessing Comparison
+Date: 2026-02-09 18:04:35
+Image: D:\Project-Practicum-Y3-S1\Smart Document Q&A and Workflow Assistant\smart-doc-assistant\data\images_for_ocr_test\image.png
+
+Raw OCR Metrics:
+  - char_count: 56.00
+  - word_count: 11.00
+  - avg_conf: 79.55
+  - alnum_ratio: 0.8036
+  - unique_word_ratio: 0.9091
+
+Preprocessed OCR Metrics:
+  - char_count: 90.00
+  - word_count: 22.00
+  - avg_conf: 25.64
+  - alnum_ratio: 0.6778
+  - unique_word_ratio: 0.8636
+
+Delta (Preprocessed - Raw):
+  - word_count: 11.00
+  - char_count: 34.00
+  - alnum_ratio: -0.1258
+  - avg_conf: -53.91
+  - unique_word_ratio: -0.0455
+
+Preprocessing Timings (ms):
+  - grayscale_ms: 2.00
+  - contrast_normalization_ms: 4.65
+  - adaptive_threshold_ms: 3.88
+  - noise_reduction_ms: 0.64

@@ -1,0 +1,21 @@
+# PDF / DOCX handling
+''' if uploaded_file is not None and uploaded_file.name.lower().endswith(".pdf"):
+    try:
+        images = convert_from_bytes(uploaded_file.read(), dpi=300)
+        for img in images:
+            # Step 1: create temp file
+            tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+            tmp_file_path = tmp_file.name
+            tmp_file.close()  # important! close it so OCR can access
+            img.save(tmp_file_path)
+
+            # Step 2: run OCR (Tesseract or Paddle)
+            t_clean, _, _, _ = tesseract_extract(tmp_file_path, debug=False)
+            text += t_clean + "\n"
+
+            # Step 3: remove temp file
+            os.unlink(tmp_file_path)
+
+    except Exception as e:
+        st.error(f"PDF conversion error: {e}")
+        text = extract_text_from_pdf(uploaded_file)'''

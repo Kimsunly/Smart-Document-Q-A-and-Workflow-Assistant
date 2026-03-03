@@ -1,6 +1,6 @@
 In order to run streamlit(app.py):
 _ activate the virtual Environment : .\.venv\Scripts\activate
-_ run the app : streamlit run "src/app.py"
+_ run the app : python -m streamlit run src/app.py
 
 ===> First thing First, in order to run the whole project you must download the requirement dependecies:
 

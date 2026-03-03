@@ -1,5 +1,6 @@
+
 import re
 
-def clean_text(text):
-    text = re.sub(r'\s+', ' ', text)  # remove extra spaces/newlines
+def clean_text(text: str) -> str:
+    text = re.sub(r'\s+', ' ', text)
     return text.strip()
