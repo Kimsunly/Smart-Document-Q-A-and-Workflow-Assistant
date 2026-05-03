@@ -1,0 +1,1 @@
+{'file': 'C:\\Users\\ADMIN\\AppData\\Local\\Temp\\Daily Schedule.pdf', 'char_count': 0, 'page_count': 2, 'zero_text_pages': 2, 'page_char_counts': [0, 0], 'text_quality_score': 0.0, 'threshold': 100, 'classification': 'scanned', 'confidence': 'high', 'processing_method': 'ocr_pytesseract', 'success': True, 'mixed_pages': 2}

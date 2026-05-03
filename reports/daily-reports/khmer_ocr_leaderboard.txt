@@ -1,0 +1,18 @@
+Khmer Handwriting OCR Benchmark
+Date: 2026-04-05 00:57:22
+Images dir: data\images_for_ocr_test
+Labels dir: C:\Project-Practicum-Y3-S1\Smart Document Q&A and Workflow Assistant\smart-doc-assistant\data\images_for_ocr_test\labels
+Lang: khm
+Samples: 3
+
+Leaderboard (lower CER/WER is better):
+1. ink_psm12: CER=N/A, WER=N/A, Conf=34.11, Samples=3
+2. ink_psm6: CER=N/A, WER=N/A, Conf=32.82, Samples=3
+3. strong_psm12: CER=N/A, WER=N/A, Conf=31.46, Samples=3
+4. strong_psm11: CER=N/A, WER=N/A, Conf=30.36, Samples=3
+5. ink_psm11: CER=N/A, WER=N/A, Conf=26.90, Samples=3
+6. strong_psm6: CER=N/A, WER=N/A, Conf=21.22, Samples=3
+7. raw_psm6: CER=N/A, WER=N/A, Conf=15.70, Samples=3
+
+Per-sample CSV: reports\daily-reports\khmer_ocr_samples.csv
+Debug variants: C:\Project-Practicum-Y3-S1\Smart Document Q&A and Workflow Assistant\smart-doc-assistant\debug\khmer_eval
