@@ -27,6 +27,11 @@ htmlcov/
 .vscode/
 .idea/
 
+# Environment secrets
+.env
+.env.*
+!.env.example
+
 # OS files
 .DS_Store
 Thumbs.db
@@ -42,3 +47,4 @@ data/pdfs/
 data/images_for_ocr_test/
 notebooks/
 
+/credentials/

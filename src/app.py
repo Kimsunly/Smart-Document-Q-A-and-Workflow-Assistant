@@ -2,12 +2,14 @@ from pdf2image import convert_from_bytes
 from question_answering.tfidf_qa import get_best_answer
 from text_processing.split_text import split_text_into_chunks
 from text_processing.clean_text import clean_text
+from text_processing.document_format import format_document_text
 from document_processing.ocr.paddle_ocr import (
     extract_text_paddle,
     _paddle_available,
     set_paddle_ocr_instance
 )
 from document_processing.ocr.pytesseract_ocr import extract_text_from_image as tesseract_extract
+from document_processing.pdf_router import PDFRouter
 from document_processing.extract_docx import extract_text_from_docx
 from document_processing.extract_pdf import extract_text_from_pdf
 import re
@@ -16,6 +18,18 @@ import tempfile
 import textwrap
 import streamlit as st
 import os
+import pytesseract
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+
+try:
+    from phase2.embeddings.embeddings import embed_chunks, embed_text
+    from phase2.vector_db.faiss_index import FAISSIndexManager
+    VECTOR_QA_AVAILABLE = True
+except Exception:
+    VECTOR_QA_AVAILABLE = False
+
+from phase2.rag.rag_service import generate_rag_answer
 # 0=INFO, 1=WARNING, 2=ERROR, 3=FATAL
 os.environ.setdefault("GLOG_minloglevel", "2")
 # keep oneDNN CPU acceleration enabled
@@ -43,31 +57,38 @@ def looks_like_bad_ocr(text: str, min_len: int = 25) -> bool:
     t = (text or "").strip()
     if len(t) < min_len:
         return True
-    weird = len(re.findall(r"[^a-zA-Z0-9\s\.,;:\-\(\)\[\]']", t))
+    weird = len(re.findall(r"[^a-zA-Z0-9\s\.,;:\-\(\)\[\]'\"]", t))
     return (weird / max(len(t), 1)) > 0.25
 
 
-def run_ocr_on_image(path: str, mode: str, debug: bool = False):
+def run_ocr_on_image(path: str, mode: str, lang_mode: str = "eng", debug: bool = False, ink_threshold: int = 18):
     """
     Unified OCR runner for images.
     Returns: cleaned_text, preproc_preview_image, raw_text_output, confidence(0..100)
     NOTE: Each backend handles its own preprocessing internally.
     """
+    # Khmer/mixed route uses tuned Tesseract preprocessing in pytesseract_ocr.
+    if "khm" in lang_mode:
+        return tesseract_extract(path, lang_mode=lang_mode, debug=debug, ink_threshold=ink_threshold)
+
     if mode == "Tesseract (fast)":
-        return tesseract_extract(path, debug=debug)
+        return tesseract_extract(path, lang_mode=lang_mode, debug=debug, ink_threshold=ink_threshold)
 
     if mode == "PaddleOCR (better handwriting)":
         if not _paddle_available:
             return "", None, "", 0.0
-        return extract_text_paddle(path, debug=debug)
+        # Paddle integration in this app currently supports English model.
+        return extract_text_paddle(path, debug=debug, lang="en")
 
     # -------------------------
     # Auto mode: run both, choose best using heuristics
     # -------------------------
-    t_clean, _, t_raw, t_conf = tesseract_extract(path, debug=False)
+    t_clean, _, t_raw, t_conf = tesseract_extract(
+        path, lang_mode=lang_mode, debug=False, ink_threshold=ink_threshold)
 
     if _paddle_available:
-        p_clean, _, p_raw, p_conf = extract_text_paddle(path, debug=False)
+        p_clean, _, p_raw, p_conf = extract_text_paddle(
+            path, debug=False, lang="en")
     else:
         p_clean, p_raw, p_conf = "", "", 0.0
 
@@ -76,17 +97,17 @@ def run_ocr_on_image(path: str, mode: str, debug: bool = False):
 
     # If one is clearly bad and the other isn't -> choose the good one
     if p_bad and not t_bad:
-        return tesseract_extract(path, debug=debug)
+        return tesseract_extract(path, lang_mode=lang_mode, debug=debug, ink_threshold=ink_threshold)
     if t_bad and not p_bad and _paddle_available:
-        return extract_text_paddle(path, debug=debug)
+        return extract_text_paddle(path, debug=debug, lang="en")
 
     # Both ok or both bad: choose by combined score (confidence + length)
     t_score = (t_conf * 1.0) + (min(len(t_clean), 500) * 0.03)
     p_score = (p_conf * 1.0) + (min(len(p_clean), 500) * 0.03)
 
     if _paddle_available and p_score > t_score:
-        return extract_text_paddle(path, debug=debug)
-    return tesseract_extract(path, debug=debug)
+        return extract_text_paddle(path, debug=debug, lang="en")
+    return tesseract_extract(path, lang_mode=lang_mode, debug=debug, ink_threshold=ink_threshold)
 
 
 # -----------------------------
@@ -106,81 +127,264 @@ if _paddle_available:
     set_paddle_ocr_instance(get_paddle_ocr())
 
 
+def _init_state():
+    st.session_state.setdefault("docs", [])
+    st.session_state.setdefault("chunks", [])
+    st.session_state.setdefault("vector_manager", None)
+    st.session_state.setdefault("query_history", [])
+
+
+def _build_index_from_docs(docs):
+    all_chunks = []
+    for doc in docs:
+        cleaned = clean_text(doc.get("text", ""))
+        doc_chunks = split_text_into_chunks(
+            cleaned,
+            doc_id=doc["doc_id"],
+            page=1,
+        )
+        for c in doc_chunks:
+            c["source_name"] = doc.get("source_name", doc["doc_id"])
+        all_chunks.extend(doc_chunks)
+
+    manager = None
+    if VECTOR_QA_AVAILABLE and all_chunks:
+        vectors = embed_chunks(all_chunks)
+        manager = FAISSIndexManager(dimension=vectors.shape[1])
+        manager.add_vectors(vectors, all_chunks)
+
+    st.session_state["chunks"] = all_chunks
+    st.session_state["vector_manager"] = manager
+
+
+def _semantic_retrieve(query: str, top_k: int = 3):
+    chunks = st.session_state.get("chunks", [])
+    if not chunks:
+        return []
+
+    manager = st.session_state.get("vector_manager")
+    if manager is not None and VECTOR_QA_AVAILABLE:
+        q_vec = embed_text(query)
+        distances, results = manager.search(q_vec, k=min(top_k, len(chunks)))
+        enriched = []
+        for dist, item in zip(distances, results):
+            row = dict(item)
+            row["score"] = float(dist)
+            enriched.append(row)
+
+        # If semantic similarity is too weak across all hits, use TF-IDF fallback.
+        # This helps when embeddings are noisy for specific docs/languages.
+        best = max((float(x.get("score", 0.0)) for x in enriched), default=0.0)
+        if best >= 0.08:
+            return enriched
+
+    # TF-IDF fallback semantic retrieval
+    texts = [c.get("text", "") for c in chunks]
+    vect = TfidfVectorizer()
+    mats = vect.fit_transform([query] + texts)
+    sims = cosine_similarity(mats[0:1], mats[1:]).flatten()
+    order = sims.argsort()[::-1][:min(top_k, len(chunks))]
+    out = []
+    for i in order:
+        row = dict(chunks[i])
+        row["score"] = float(sims[i])
+        out.append(row)
+    return out
+
+
 # -----------------------------
 # UI
 # -----------------------------
 st.set_page_config(page_title="Smart Document Q&A Assistant", page_icon="📄")
 st.title("📄 Smart Document Q&A Assistant")
 st.write("🚀 Upload PDF/DOCX or images. Choose OCR engine (Auto/Tesseract/Paddle).")
+_init_state()
 
 ocr_mode = st.radio(
     "🧠 OCR Engine",
-    ("Auto", "Tesseract (fast)", "PaddleOCR (better handwriting)"),
+    (
+        "Auto",
+        "Tesseract (fast)",
+        "PaddleOCR (better handwriting)",
+    ),
     index=0,
     horizontal=True
 )
+
+ocr_language = st.radio(
+    "🌐 OCR Language",
+    ("English (eng)", "Khmer (khm)", "Mixed (eng+khm)"),
+    index=0,
+    horizontal=True
+)
+
+lang_mode = {
+    "English (eng)": "eng",
+    "Khmer (khm)": "khm",
+    "Mixed (eng+khm)": "eng+khm",
+}[ocr_language]
+
+# Ink threshold tuning for Khmer blue-ink variants (used by Tesseract path)
+ink_threshold = None
+if "khm" in lang_mode:
+    ink_threshold = st.slider(
+        "🖋️ Ink detection threshold (blue ink tuning)",
+        min_value=5,
+        max_value=80,
+        value=18,
+        step=1,
+        help="Lower=more sensitive to faint blue ink, Higher=ignore light noise"
+    )
+
+if "khm" in lang_mode and ocr_mode != "Tesseract (fast)":
+    st.info("Khmer/Mixed mode selected: forcing Tesseract backend for better Khmer recognition.")
+    ocr_mode = "Tesseract (fast)"
+
+qa_mode = st.radio(
+    "🔎 QA Retrieval",
+    ("TF-IDF (baseline)", "Embeddings + FAISS"),
+    index=1 if VECTOR_QA_AVAILABLE else 0,
+    horizontal=True
+)
+
+rag_mode_ui = st.radio(
+    "🧩 RAG Generation Mode",
+    (
+        "Local extractive (free)",
+        "Ollama local LLM (free)",
+    ),
+    index=0,
+    horizontal=True,
+)
+
+if rag_mode_ui == "Local extractive (free)":
+    rag_mode = "local"
+elif rag_mode_ui == "Ollama local LLM (free)":
+    rag_mode = "ollama"
+else:
+    rag_mode = "local"
+
+if qa_mode == "Embeddings + FAISS" and not VECTOR_QA_AVAILABLE:
+    st.warning(
+        "Embeddings/FAISS modules unavailable. Falling back to TF-IDF."
+    )
 
 if ocr_mode == "PaddleOCR (better handwriting)" and not _paddle_available:
     st.warning(
         "PaddleOCR not installed. Install `paddleocr` or choose Auto/Tesseract.")
 
-uploaded_file = st.file_uploader(
-    "📂 Upload a PDF or DOCX file", type=["pdf", "docx"])
+if ocr_mode == "PaddleOCR (better handwriting)" and lang_mode != "eng":
+    st.info(
+        "PaddleOCR path in this app currently runs with English model. "
+        "For Khmer/mixed tests, choose Tesseract (fast) or Auto."
+    )
+
+if "khm" in lang_mode:
+    try:
+        available_langs = set(pytesseract.get_languages(config=""))
+    except Exception:
+        available_langs = set()
+
+    if "khm" not in available_langs:
+        st.error(
+            "Khmer OCR language pack is not installed in Tesseract. "
+            "Please add khm.traineddata to your Tesseract tessdata folder: "
+            "C:\\Program Files\\Tesseract-OCR\\tessdata"
+        )
+
+st.subheader("📄 Document Upload")
+uploaded_files = st.file_uploader(
+    "📂 Upload one or more PDF/DOCX files",
+    type=["pdf", "docx"],
+    accept_multiple_files=True,
+    help="Use this for full document processing and QA."
+)
+
+st.subheader("🖼️ OCR Image Upload")
+st.caption("Use this section to test OCR directly on image files.")
 uploaded_images = st.file_uploader(
-    "📂 Upload one or more images (PNG/JPG/JPEG)",
+    "📂 Upload one or more images for OCR (PNG/JPG/JPEG)",
     type=["png", "jpg", "jpeg"],
-    accept_multiple_files=True
+    accept_multiple_files=True,
+    help="Each uploaded image will run through OCR and show raw/cleaned output plus confidence."
 )
 
 text = ""
+pending_docs = []
 
 
 # -----------------------------
 # PDF / DOCX handling
 # -----------------------------
-if uploaded_file is not None:
-    name = uploaded_file.name.lower()
+if uploaded_files:
+    router = PDFRouter(text_threshold=100)
+    for uploaded_file in uploaded_files:
+        name = uploaded_file.name.lower()
 
-    # DOCX
-    if name.endswith(".docx"):
-        try:
-            text = extract_text_from_docx(uploaded_file)
-        except Exception as e:
-            st.error(f"DOCX extraction error: {e}")
-
-    # PDF
-    elif name.endswith(".pdf"):
-        file_bytes = uploaded_file.read()
-
-        # 1) Try embedded text layer first (digital PDF)
-        try:
-            text = extract_text_from_pdf(io.BytesIO(file_bytes))
-        except Exception:
-            text = ""
-
-        # 2) If no embedded text, do OCR on rendered pages
-        if not text.strip():
+        # DOCX
+        if name.endswith(".docx"):
             try:
-                images = convert_from_bytes(file_bytes, dpi=300)
+                uploaded_file.seek(0)
+                text = extract_text_from_docx(uploaded_file)
+                if text.strip():
+                    pending_docs.append(
+                        {
+                            "doc_id": "",
+                            "source_name": uploaded_file.name,
+                            "text": text,
+                        }
+                    )
+                    st.success(f"✅ Processed DOCX: {uploaded_file.name}")
+                else:
+                    st.warning(
+                        f"⚠️ No readable text in DOCX: {uploaded_file.name}")
+            except Exception as e:
+                st.error(f"DOCX extraction error ({uploaded_file.name}): {e}")
 
-                for img in images:
-                    tmp = tempfile.NamedTemporaryFile(
-                        delete=False, suffix=".png")
-                    tmp_path = tmp.name
-                    tmp.close()
-                    img.save(tmp_path)
+        # PDF
+        elif name.endswith(".pdf"):
+            uploaded_file.seek(0)
+            file_bytes = uploaded_file.read()
+            tmp_pdf_path = None
+            try:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_pdf:
+                    tmp_pdf.write(file_bytes)
+                    tmp_pdf_path = tmp_pdf.name
 
-                    cleaned, _, _, _ = run_ocr_on_image(
-                        tmp_path, ocr_mode, debug=False)
-                    text += cleaned + "\n"
+                text, processing_method, metadata = router.route_pdf(
+                    tmp_pdf_path,
+                    apply_ocr=True,
+                    lang_mode=lang_mode
+                )
 
-                    try:
-                        os.unlink(tmp_path)
-                    except Exception:
-                        pass
+                if text.strip():
+                    pending_docs.append(
+                        {
+                            "doc_id": "",
+                            "source_name": uploaded_file.name,
+                            "text": text,
+                        }
+                    )
+                    st.success(f"✅ Processed PDF: {uploaded_file.name}")
+                else:
+                    st.warning(
+                        f"⚠️ No readable text in PDF: {uploaded_file.name}")
+
+                st.caption(
+                    f"{uploaded_file.name} -> "
+                    f"classification: {metadata.get('classification', 'unknown')} | "
+                    f"method: {processing_method} | chars: {metadata.get('char_count', 0)}"
+                )
 
             except Exception as e:
-                st.error(f"PDF OCR fallback error: {e}")
+                st.error(
+                    f"PDF routing/processing error ({uploaded_file.name}): {e}")
+            finally:
+                if tmp_pdf_path:
+                    try:
+                        os.unlink(tmp_pdf_path)
+                    except Exception:
+                        pass
 
 
 # -----------------------------
@@ -198,6 +402,7 @@ if uploaded_images:
         st.success(f"✅ Uploaded: {uploaded_image.name}")
 
         with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_file:
+            uploaded_image.seek(0)
             tmp_file.write(uploaded_image.getvalue())
             tmp_file_path = tmp_file.name
 
@@ -206,12 +411,13 @@ if uploaded_images:
         # Each OCR backend handles preprocessing properly.
         try:
             cleaned, preproc_preview, raw, conf = run_ocr_on_image(
-                tmp_file_path, ocr_mode, debug=True)
+                tmp_file_path, ocr_mode, lang_mode=lang_mode, debug=True, ink_threshold=ink_threshold)
         except Exception as e:
             st.error(f"OCR error on {uploaded_image.name}: {e}")
             cleaned, preproc_preview, raw, conf = "", None, "", 0.0
             with st.expander("🔧 Paddle Debug (for troubleshooting)"):
-                import paddle, paddleocr
+                import paddle
+                import paddleocr
                 st.write("paddle:", paddle.__version__)
                 st.write("paddleocr:", paddleocr.__version__)
                 st.write("Paddle available:", _paddle_available)
@@ -221,6 +427,13 @@ if uploaded_images:
         all_cleaned_texts.append(cleaned)
         all_confidences.append(conf)
         text += cleaned + "\n"
+        pending_docs.append(
+            {
+                "doc_id": "",
+                "source_name": uploaded_image.name,
+                "text": cleaned,
+            }
+        )
 
         # Clean temp
         try:
@@ -235,7 +448,7 @@ if uploaded_images:
         # Original
         st.image(
             uploaded_images[idx], caption=f"Original — {name}", use_container_width=True)
-        
+
         # Preprocessed preview if backend provides it
         if all_preprocessed_images[idx] is not None:
             st.image(
@@ -248,7 +461,7 @@ if uploaded_images:
         # Cleaned OCR text
         st.subheader(f"Cleaned OCR Text — {name}")
         st.text_area(f"cleaned_{idx}",
-                    all_cleaned_texts[idx] or "", height=180)
+                     all_cleaned_texts[idx] or "", height=180)
 
         # Confidence
         st.metric("OCR Confidence", f"{all_confidences[idx]:.1f}%")
@@ -260,36 +473,198 @@ if uploaded_images:
 
 
 # -----------------------------
-# Downstream QA
+# Process & Index (Task 6)
 # -----------------------------
-if text.strip():
+if pending_docs:
+    combined_text = "\n\n".join([d["text"]
+                                for d in pending_docs if d["text"].strip()])
     st.subheader("📄 Document Text Preview (combined cleaned text)")
-    st.text_area("combined_text", text[:4000], height=300)
+    preview_mode = st.selectbox(
+        "Preview format",
+        ("Formatted (conservative)", "Formatted (aggressive)", "Cleaned", "Raw"),
+        index=0,
+        help="Choose how to preview extracted text. Conservative keeps structure; aggressive merges more."
+    )
 
-    cleaned_for_qa = clean_text(text)
-    st.subheader("🧹 Cleaned for QA (first 1000 chars)")
-    st.text_area("cleaned_for_qa", cleaned_for_qa[:1000], height=200)
+    if preview_mode == "Raw":
+        display_text = combined_text
+    elif preview_mode == "Cleaned":
+        # cleaned is what OCR returned (already cleaned)
+        display_text = combined_text
+    elif preview_mode == "Formatted (aggressive)":
+        display_text = format_document_text(combined_text, mode="aggressive")
+    else:
+        display_text = format_document_text(combined_text, mode="conservative")
 
-    chunks = split_text_into_chunks(cleaned_for_qa, chunk_size=200)
-    st.write(f"📑 Document split into {len(chunks)} chunks")
+    st.text_area("combined_text", display_text[:4000], height=300)
 
-    st.subheader("Preview of first 5 chunks:")
-    for i, chunk in enumerate(chunks[:5]):
-        preview = textwrap.shorten(chunk, width=200, placeholder="...")
-        st.write(f"Chunk {i+1}: {preview}")
-
-    user_question = st.text_input("❓ Ask a question about this document:")
-    if user_question:
-        answer, score = get_best_answer(user_question, chunks)
-        st.subheader("💡 Answer:")
-        st.markdown(
-            f"**Question:** {user_question}  \n"
-            f"**Answer:** {answer}  \n"
-            f"**Similarity Score:** `{score:.2f}`"
+col_a, col_b = st.columns(2)
+with col_a:
+    if st.button("⚙️ Process & Index Current Uploads", use_container_width=True):
+        existing = st.session_state.get("docs", [])
+        start_idx = len(existing) + 1
+        for i, d in enumerate(pending_docs, start=start_idx):
+            doc = dict(d)
+            doc["doc_id"] = f"DOC_{i:03d}"
+            existing.append(doc)
+        st.session_state["docs"] = existing
+        _build_index_from_docs(existing)
+        st.success(
+            f"Indexed {len(existing)} document(s), {len(st.session_state.get('chunks', []))} chunk(s)."
         )
-        with st.expander("Show raw answer details"):
-            st.write({"question": user_question,
-                     "answer": answer, "score": score})
 
-elif (uploaded_file is not None) or (uploaded_images):
+with col_b:
+    if st.button("🧹 Clear Index", use_container_width=True):
+        st.session_state["docs"] = []
+        st.session_state["chunks"] = []
+        st.session_state["vector_manager"] = None
+        st.session_state["query_history"] = []
+        st.success("Index and history cleared.")
+
+if st.session_state.get("docs"):
+    st.caption(
+        f"Indexed docs: {len(st.session_state['docs'])} | "
+        f"Indexed chunks: {len(st.session_state.get('chunks', []))}"
+    )
+
+    with st.expander("Indexed Documents"):
+        for d in st.session_state["docs"]:
+            st.write({"doc_id": d.get("doc_id"),
+                     "source_name": d.get("source_name")})
+
+    with st.expander("Formatted Document Preview"):
+        for d in st.session_state["docs"]:
+            st.markdown(
+                f"### {d.get('source_name', d.get('doc_id', 'Document'))}")
+            if preview_mode == "Formatted (aggressive)":
+                formatted_preview = format_document_text(
+                    d.get("text", ""), mode="aggressive")
+            elif preview_mode == "Raw":
+                formatted_preview = d.get("text", "")
+            else:
+                formatted_preview = format_document_text(
+                    d.get("text", ""), mode="conservative")
+
+            st.text_area(
+                f"formatted_{d.get('doc_id', d.get('source_name', 'doc'))}",
+                formatted_preview[:4000],
+                height=240,
+            )
+
+
+# -----------------------------
+# Retrieval + RAG QA (Tasks 4 & 5)
+# -----------------------------
+if st.session_state.get("chunks"):
+    top_k = st.slider("Top-k retrieval", min_value=1, max_value=8, value=3)
+
+    st.caption("Suggested actions")
+    quick_cols = st.columns(3)
+
+    if quick_cols[0].button("Summarize the document", use_container_width=True):
+        st.session_state["user_question"] = "What is this document about?"
+        st.rerun()
+
+    if quick_cols[1].button("Explain the assignment", use_container_width=True):
+        st.session_state["user_question"] = "Explain this assignment and the requirements in simple steps."
+        st.rerun()
+
+    if quick_cols[2].button("Show next steps", use_container_width=True):
+        st.session_state["user_question"] = "What steps should I follow to complete this document task?"
+        st.rerun()
+
+    with st.form("qa_form", clear_on_submit=False):
+        st.caption(
+            "Ask anything about the uploaded document. The assistant will answer using the document content.")
+        user_question = st.text_input(
+            "Ask about the document", key="user_question")
+        ask_clicked = st.form_submit_button("Ask")
+
+    if ask_clicked and user_question.strip():
+        retrieved = _semantic_retrieve(user_question.strip(), top_k=top_k)
+
+        if not retrieved:
+            st.warning("No relevant chunks retrieved.")
+        else:
+            rag = generate_rag_answer(
+                question=user_question.strip(),
+                retrieved_chunks=retrieved,
+                retries=2,
+                # Increased for 3B model (needs ~30-60 sec for first response)
+                timeout_sec=60,
+                rag_mode=rag_mode,
+            )
+
+            best_chunk = retrieved[0]
+            score = float(best_chunk.get("score", 0.0))
+
+            st.subheader("Document Answer")
+            st.markdown(rag["answer"])
+            st.divider()
+            st.caption(
+                f"Best match: {score:.4f} | Reference chunk: {best_chunk.get('chunk_id', 'N/A')}"
+                f" from {best_chunk.get('source_name', best_chunk.get('doc_id', 'N/A'))}"
+            )
+
+            with st.expander("Reference Context"):
+                st.text_area("rag_context", rag["context"], height=240)
+
+            with st.expander("Evidence Sources"):
+                for i, item in enumerate(retrieved, start=1):
+                    st.write(
+                        {
+                            "rank": i,
+                            "score": round(float(item.get("score", 0.0)), 5),
+                            "source": item.get("source_name", item.get("doc_id")),
+                            "chunk_id": item.get("chunk_id"),
+                            "page": item.get("page"),
+                        }
+                    )
+                    st.caption(textwrap.shorten(
+                        item.get("text", ""), width=260, placeholder="..."))
+
+            st.caption(
+                f"Provider: {rag['provider']} | attempts: {rag['attempts']} | "
+                f"latency: {rag['elapsed_ms']} ms | est tokens: {rag['total_tokens_est']} | "
+                f"est cost: ${rag['cost_usd_est']}"
+            )
+
+            if rag.get("provider") not in {"openai", "ollama"} and rag.get("last_error"):
+                st.warning(
+                    "RAG fallback reason: "
+                    f"{rag['last_error']} | "
+                    f"min_score={rag.get('fallback_min_score', 0.05):.2f}"
+                )
+
+            if rag_mode == "ollama" and rag.get("provider") != "ollama" and rag.get("last_error"):
+                st.warning(
+                    "Ollama not available, using extractive fallback. "
+                    f"Reason: {rag['last_error']}"
+                )
+
+            st.session_state["query_history"].append(
+                {
+                    "question": user_question.strip(),
+                    "answer": rag["answer"],
+                    "top_score": round(score, 5),
+                    "source": best_chunk.get("source_name", best_chunk.get("doc_id")),
+                    "chunk_id": best_chunk.get("chunk_id"),
+                }
+            )
+
+if st.session_state.get("query_history"):
+    with st.expander("🕘 Query History"):
+        for idx, h in enumerate(reversed(st.session_state["query_history"]), start=1):
+            st.write(
+                {
+                    "#": idx,
+                    "question": h["question"],
+                    "answer": h["answer"],
+                    "source": h["source"],
+                    "chunk_id": h["chunk_id"],
+                    "top_score": h["top_score"],
+                }
+            )
+
+if (uploaded_files or uploaded_images) and not pending_docs:
     st.warning("⚠️ No readable text found. Try uploading a clearer image or PDF.")
