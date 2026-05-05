@@ -1,5 +1,9 @@
 import os
 from pathlib import Path
+from dotenv import load_dotenv
+
+# Load .env file first
+load_dotenv(override=True)
 
 # Basic configuration for automation components (read from environment)
 
@@ -15,6 +19,10 @@ META_DIR = DATA_DIR / "index_meta"
 # Slack
 SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN", "")
 SLACK_SIGNING_SECRET = os.getenv("SLACK_SIGNING_SECRET", "")
+SLACK_APP_TOKEN = os.getenv("SLACK_APP_TOKEN", "")
+SLACK_TOKEN_VERIFICATION_ENABLED = os.getenv("SLACK_TOKEN_VERIFICATION_ENABLED", "true").lower() in {
+    "1", "true", "yes", "on"
+}
 
 # Telegram
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
