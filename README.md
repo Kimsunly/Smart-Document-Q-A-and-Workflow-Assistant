@@ -165,9 +165,10 @@ Optional OCR system dependencies (needed for best PDF/image OCR features):
 ---
 
 ## 🙌 Contributors
-
-- Ly Kimsun (ITE, RUPP, Year 3)  
-- Advisor: Mr. Toem Theara  
+- Advisor: Mr. Toem Theara 
+- Ly Kimsun (ITE, RUPP, Year 3) 
+- Ly MengHong (ITE, RUPP, Year 3)
+ 
 
 ---
 
