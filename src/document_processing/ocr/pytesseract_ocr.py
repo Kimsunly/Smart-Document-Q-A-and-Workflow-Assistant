@@ -127,11 +127,14 @@ def extract_text_from_image(image_path: str, lang_mode: str = "eng", debug: bool
         return float(sum(vals) / len(vals)) if vals else 0.0
 
     def extract_text(data_dict):
-        # Reconstruct lines from Tesseract output using block/par/line grouping
+        # Reconstruct lines from Tesseract output using block/par/line grouping and preserve spatial spacing
         texts = data_dict.get("text", [])
         blocks = data_dict.get("block_num", [])
         pars = data_dict.get("par_num", [])
         lines_idx = data_dict.get("line_num", [])
+        lefts = data_dict.get("left", [])
+        widths = data_dict.get("width", [])
+        heights = data_dict.get("height", [])
 
         grouped = {}
         for i, word in enumerate(texts):
@@ -140,14 +143,46 @@ def extract_text_from_image(image_path: str, lang_mode: str = "eng", debug: bool
             key = (blocks[i] if i < len(blocks) else 0,
                    pars[i] if i < len(pars) else 0,
                    lines_idx[i] if i < len(lines_idx) else 0)
-            grouped.setdefault(key, []).append(word)
+            
+            left = lefts[i] if i < len(lefts) else 0
+            width = widths[i] if i < len(widths) else 0
+            height = heights[i] if i < len(heights) else 10
+            grouped.setdefault(key, []).append((left, width, height, word))
 
         # Sort keys for deterministic line order
         out_lines = []
         for key in sorted(grouped.keys()):
-            out_lines.append(" ".join(grouped[key]).strip())
+            words_in_line = grouped[key]
+            # Sort words inside the line from left to right
+            words_in_line.sort(key=lambda x: x[0])
+            
+            line_str = ""
+            prev_right = None
+            for left, width, height, word in words_in_line:
+                # Estimate average character width (roughly half of font height)
+                char_width = max(0.5 * height, 1.0)
+                
+                if prev_right is not None:
+                    gap = left - prev_right
+                    if gap > 0:
+                        gap_in_spaces = gap / char_width
+                        if gap_in_spaces >= 1.5:
+                            # Insert multiple spaces for column gaps
+                            spaces = " " * max(2, int(round(gap_in_spaces)))
+                        else:
+                            spaces = " "
+                    else:
+                        spaces = ""
+                else:
+                    spaces = ""
+                
+                line_str += spaces + word
+                prev_right = left + width
+                
+            out_lines.append(line_str.strip())
 
         return "\n".join(out_lines)
+
 
     def text_len(data_dict):
         return len(extract_text(data_dict))
