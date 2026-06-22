@@ -123,17 +123,55 @@ def _format_items_with_lines(items: List[Tuple[Any, str, float]]) -> Tuple[str, 
     clean_lines = []
     raw_lines = []
     for line in lines:
-        clean_tokens = [token[1] for token in line if token[1]]
-        raw_tokens = [
-            f"{token[1]} ({token[2]:.1f}%)" for token in line if token[1]]
+        # line is a list of (bbox, text, conf)
+        # Sort line by x_min just in case
+        line_enriched = []
+        for bbox, text, conf in line:
+            if not text:
+                continue
+            pts = np.array(bbox, dtype=np.float32)
+            x_min = float(np.min(pts[:, 0]))
+            x_max = float(np.max(pts[:, 0]))
+            y_min = float(np.min(pts[:, 1]))
+            y_max = float(np.max(pts[:, 1]))
+            height = max(y_max - y_min, 1.0)
+            line_enriched.append((x_min, x_max, height, text, conf))
+            
+        line_enriched.sort(key=lambda t: t[0])
+        
+        clean_tokens = []
+        raw_tokens = []
+        prev_x_max = None
+        
+        for x_min, x_max, height, text, conf in line_enriched:
+            char_width = max(0.5 * height, 1.0)
+            
+            if prev_x_max is not None:
+                gap = x_min - prev_x_max
+                if gap > 0:
+                    gap_in_spaces = gap / char_width
+                    if gap_in_spaces >= 1.5:
+                        spaces = " " * max(2, int(round(gap_in_spaces)))
+                    else:
+                        spaces = " "
+                else:
+                    spaces = ""
+            else:
+                spaces = ""
+                
+            clean_tokens.append(spaces + text)
+            raw_tokens.append(f"{text} ({conf:.1f}%)")
+            prev_x_max = x_max
+            
         if clean_tokens:
-            clean_lines.append(" ".join(clean_tokens))
+            clean_lines.append("".join(clean_tokens))
         if raw_tokens:
             raw_lines.append(" | ".join(raw_tokens))
 
     cleaned_text = "\n".join(clean_lines).strip()
     raw_text = "\n".join(raw_lines).strip()
     return cleaned_text, raw_text
+
 
 
 def _apply_handwriting_fixes(text: str) -> str:

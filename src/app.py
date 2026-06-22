@@ -132,6 +132,7 @@ def _init_state():
     st.session_state.setdefault("chunks", [])
     st.session_state.setdefault("vector_manager", None)
     st.session_state.setdefault("query_history", [])
+    st.session_state.setdefault("ocr_pages", [])
 
 
 def _build_index_from_docs(docs):
@@ -432,8 +433,10 @@ if uploaded_images:
                 "doc_id": "",
                 "source_name": uploaded_image.name,
                 "text": cleaned,
+                "image_bytes": uploaded_image.getvalue(),
             }
         )
+        st.session_state["ocr_pages"].append((uploaded_image.getvalue(), cleaned))
 
         # Clean temp
         try:
@@ -519,6 +522,7 @@ with col_b:
         st.session_state["chunks"] = []
         st.session_state["vector_manager"] = None
         st.session_state["query_history"] = []
+        st.session_state["ocr_pages"] = []
         st.success("Index and history cleared.")
 
 if st.session_state.get("docs"):
@@ -668,3 +672,156 @@ if st.session_state.get("query_history"):
 
 if (uploaded_files or uploaded_images) and not pending_docs:
     st.warning("⚠️ No readable text found. Try uploading a clearer image or PDF.")
+
+
+# ═══════════════════════════════════════════════════════════════
+# STRUCTURED DATA EXPORT (NEW FEATURE)
+# ═══════════════════════════════════════════════════════════════
+
+if st.session_state.get("docs"):
+    st.divider()
+    st.subheader("📊 Structured Data Export")
+    st.caption(
+        "Convert OCR-extracted content into canonical, machine-readable formats. "
+        "Export files directly below."
+    )
+    
+    try:
+        from structured_data import DataExtractor, JSONExporter, CSVExporter, ExcelExporter
+        
+        # Get combined text from all docs
+        combined_doc_text = "\n\n".join([d.get("text", "") for d in st.session_state.get("docs", [])])
+        first_doc_name = st.session_state["docs"][0].get("source_name", "document") if st.session_state["docs"] else "document"
+        
+        # Initialize extractor
+        extractor = DataExtractor(
+            text=combined_doc_text,
+            source_name=first_doc_name,
+            doc_id="DOC_001"
+        )
+        
+        # Extract all structures
+        extracted_data = extractor.extract_all()
+        
+        # Premium Horizontal Grid with Direct Download Buttons
+        export_cols = st.columns(3)
+        
+        # 1. JSON Card
+        with export_cols[0]:
+            st.markdown("""
+            <div style="background-color:#1e293b; padding:15px; border-radius:10px; border-left:5px solid #6366f1; min-height:120px; margin-bottom:12px;">
+                <h4 style="color:#ffffff; margin:0 0 5px 0; font-size:15px;">📋 JSON Output</h4>
+                <p style="color:#94a3b8; font-size:11px; margin:0; line-height:1.4;">Standard internal schema containing fields, raw text, and metadata.</p>
+            </div>
+            """, unsafe_allow_html=True)
+            json_str = JSONExporter.export(extracted_data, pretty=True)
+            st.download_button(
+                label="⬇️ Download JSON",
+                data=json_str,
+                file_name=f"{first_doc_name.replace('.pdf', '').replace('.docx', '').replace('.png', '').replace('.jpg', '').replace('.jpeg', '')}_export.json",
+                mime="application/json",
+                use_container_width=True,
+                key="dl_json"
+            )
+        
+        # 2. CSV Card
+        with export_cols[1]:
+            st.markdown("""
+            <div style="background-color:#1e293b; padding:15px; border-radius:10px; border-left:5px solid #10b981; min-height:120px; margin-bottom:12px;">
+                <h4 style="color:#ffffff; margin:0 0 5px 0; font-size:15px;">📝 CSV Format</h4>
+                <p style="color:#94a3b8; font-size:11px; margin:0; line-height:1.4;">Flattened spreadsheet rows, optimal for fast database imports.</p>
+            </div>
+            """, unsafe_allow_html=True)
+            records = extracted_data.get("records", [])
+            if records:
+                csv_str = CSVExporter.export_records(records)
+                st.download_button(
+                    label="⬇️ Download CSV",
+                    data=csv_str,
+                    file_name=f"{first_doc_name.replace('.pdf', '').replace('.docx', '').replace('.png', '').replace('.jpg', '').replace('.jpeg', '')}_records.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                    key="dl_csv"
+                )
+            else:
+                st.button("⬇️ CSV (Empty)", disabled=True, use_container_width=True, key="dl_csv_disabled")
+        
+        # 3. Excel Card
+        with export_cols[2]:
+            st.markdown("""
+            <div style="background-color:#1e293b; padding:15px; border-radius:10px; border-left:5px solid #3b82f6; min-height:120px; margin-bottom:12px;">
+                <h4 style="color:#ffffff; margin:0 0 5px 0; font-size:15px;">📊 Excel Sheets</h4>
+                <p style="color:#94a3b8; font-size:11px; margin:0; line-height:1.4;">Professional workbook featuring frozen headers, auto-fit columns, and colored rows.</p>
+            </div>
+            """, unsafe_allow_html=True)
+            try:
+                excel_bytes = ExcelExporter.export(extracted_data)
+                st.download_button(
+                    label="⬇️ Download Excel",
+                    data=excel_bytes,
+                    file_name=f"{first_doc_name.replace('.pdf', '').replace('.docx', '').replace('.png', '').replace('.jpg', '').replace('.jpeg', '')}_export.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                    key="dl_excel"
+                )
+            except Exception as exc_err:
+                st.error(f"Excel failed: {exc_err}")
+
+
+        
+        # Extraction Preview & Analytics
+        st.write("")
+        st.markdown("### 🔍 Extraction Preview & Analytics")
+        
+        with st.expander("📊 Detailed Extraction Metrics & Table Preview", expanded=True):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.subheader("Tables Found")
+                tables = extracted_data.get("tables", [])
+                if tables:
+                    for idx, table in enumerate(tables, 1):
+                        st.write(f"**Table {idx}**: {table.get('row_count', 0)} rows × {table.get('column_count', 0)} columns")
+                        # Display small interactive table for preview!
+                        if table.get("rows"):
+                            import pandas as pd
+                            df_preview = pd.DataFrame(table.get("rows"), columns=table.get("headers"))
+                            st.dataframe(df_preview, use_container_width=True)
+                else:
+                    st.info("No tables detected")
+            
+            with col2:
+                st.subheader("Records Detected")
+                records = extracted_data.get("records", [])
+                if records:
+                    st.metric("Total Person/Student Records", len(records))
+                    for record in records[:5]:  # Show first 5
+                        st.markdown(f"- **{record.get('name', 'N/A')}** (ID: `{record.get('id', 'N/A')}`, Class: `{record.get('class', 'N/A')}`)")
+                    if len(records) > 5:
+                        st.caption(f"... and {len(records) - 5} more records")
+                else:
+                    st.info("No person records detected")
+            
+            st.write("")
+            col3, col4 = st.columns(2)
+            with col3:
+                st.subheader("Key-Value Pairs (Forms)")
+                kvp = extracted_data.get("key_value_pairs", {})
+                if kvp:
+                    st.json(kvp)
+                else:
+                    st.info("No form fields detected")
+            with col4:
+                st.subheader("Lists Detected")
+                lists = extracted_data.get("lists", [])
+                if lists:
+                    for idx, lst in enumerate(lists, 1):
+                        st.write(f"**List {idx}** ({lst.get('type', 'list')}): {lst.get('item_count', 0)} items")
+                else:
+                    st.info("No lists detected")
+    
+    except ImportError as e:
+        st.warning(f"⚠️ Structured data module not available: {e}")
+    except Exception as e:
+        st.error(f"❌ Export error: {e}")
+
