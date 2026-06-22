@@ -42,4 +42,5 @@ slack-bolt
 python-telegram-bot
 requests
 openpyxl
+reportlab
 pandas
