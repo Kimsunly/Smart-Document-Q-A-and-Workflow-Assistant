@@ -15,7 +15,7 @@ celery = Celery("auto_ingest", broker=CELERY_BROKER_URL,
 celery.config_from_object('automation.celery_config')
 
 
-@celery.task(bind=True)
+@celery.task(bind=True, name="automation.tasks.ingest_and_index_file")
 def ingest_and_index_file(self, file_bytes: bytes, filename: str, source_name: str, lang_mode: str = "eng"):
     """Celery task wrapper that processes a file and indexes it.
 

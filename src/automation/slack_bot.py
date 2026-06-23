@@ -53,17 +53,26 @@ def _download_private_file(url: str) -> bytes:
 
 
 def _recent_ingested_docs(limit: int = 8) -> List[str]:
+    import json
     ingest_files = sorted(
-        Path(META_DIR).glob("ingest_*.json"),
+        Path(META_DIR).glob("*.json"),
         key=lambda p: p.stat().st_mtime,
         reverse=True,
     )
     names = []
-    for path in ingest_files[:limit]:
-        stem = path.stem
-        # ingest_<ts>_<filename>
-        parts = stem.split("_", 2)
-        names.append(parts[2] if len(parts) == 3 else stem)
+    for path in ingest_files:
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+            channel = meta.get("channel", "") or meta.get("doc_id", "")
+            if channel.startswith("slack:"):
+                src_name = meta.get("source_name", "")
+                if src_name:
+                    names.append(src_name)
+                    if len(names) >= limit:
+                        break
+        except Exception:
+            continue
     return names
 
 
@@ -72,6 +81,7 @@ def _help_text() -> str:
         "*📚 Smart Document Q&A Bot - Available Commands*\n\n"
         "*Query Documents:*\n"
         "• `ask [question]` - Ask a question about indexed documents\n"
+        "• `ask [doc_name] | [question]` - Ask a question about a specific document only\n"
         "• `search [topic]` - Search for topics/keywords in documents (returns top 5 results)\n"
         "• `summarize` - Generate a summary of all indexed documents\n\n"
         "*Admin Commands:*\n"
@@ -80,7 +90,8 @@ def _help_text() -> str:
         "• `help` or `help_docs` - Show this help message\n\n"
         "*File Upload:*\n"
         "Upload PDF, DOCX, or TXT files to any channel and the bot will automatically index them.\n\n"
-        "_Tip: In Slack, mention the bot and send one of the commands above, for example: `@Smart Document ask what is the daily schedule?`._"
+        "_Tip: In Slack, mention the bot and send one of the commands above, for example: `@Smart Document ask what is the daily schedule?`._\n"
+        "_To query a specific file: `@Smart Document ask Daily Schedule | what is the schedule?`_"
     )
 
 
@@ -124,7 +135,7 @@ def _handle_text_command(text: str, respond) -> bool:
         collected = []
         seen_sources = set()
         for doc_name in docs:
-            for result in query_documents(doc_name, top_k=3):
+            for result in query_documents(doc_name, top_k=3, channel="slack"):
                 source = result.get("source", "Unknown")
                 if source in seen_sources:
                     continue
@@ -133,7 +144,7 @@ def _handle_text_command(text: str, respond) -> bool:
 
         if collected:
             context = "\n\n".join([r.get("text", "") for r in collected])
-            summary = answer_question(summary_prompt, context)
+            summary = answer_question(summary_prompt, context, channel="slack")
         else:
             summary = f"Indexed {len(docs)} documents: {', '.join(docs)}"
 
@@ -148,20 +159,28 @@ def _handle_text_command(text: str, respond) -> bool:
                 return True
 
             if prefix.startswith("ask"):
-                results = query_documents(query, top_k=3)
+                source_filter = None
+                query_text = query
+                if "|" in query:
+                    parts = query.split("|", 1)
+                    source_filter = parts[0].strip()
+                    query_text = parts[1].strip()
+
+                results = query_documents(query_text, top_k=3, source_filter=source_filter, channel="slack")
                 if not results:
-                    respond(f"No relevant documents found for: {query}")
+                    filter_text = f" matching filter '{source_filter}'" if source_filter else ""
+                    respond(f"No relevant documents found{filter_text} for: {query_text}")
                     return True
 
                 context = "\n\n".join([
                     f"Source: {r.get('source', 'Unknown')}\n{r.get('text', '')}"
                     for r in results
                 ])
-                answer = answer_question(query, context)
-                respond(f"*Q:* {query}\n\n*A:* {answer}")
+                answer = answer_question(query_text, context, source_filter=source_filter, channel="slack")
+                respond(f"*Q:* {query_text}\n\n*A:* {answer}")
                 return True
 
-            results = query_documents(query, top_k=5)
+            results = query_documents(query, top_k=5, channel="slack")
             if not results:
                 respond(f"No results found for: {query}")
                 return True
@@ -269,18 +288,27 @@ def create_app() -> App:
         ack()
         user_question = body.get("text", "").strip()
         if not user_question:
-            respond("Usage: /ask [your question]")
+            respond("Usage: /ask [your question] OR /ask [doc_name] | [your question]")
             return
 
         try:
+            source_filter = None
+            query_text = user_question
+            if "|" in user_question:
+                parts = user_question.split("|", 1)
+                source_filter = parts[0].strip()
+                query_text = parts[1].strip()
+
+            filter_info = f" (filtered by: *{source_filter}*)" if source_filter else ""
             respond(
-                f"Searching documents for: *{user_question}*\n_Processing..._")
+                f"Searching documents for: *{query_text}*{filter_info}\n_Processing..._")
 
             # Query FAISS index for relevant documents
-            results = query_documents(user_question, top_k=3)
+            results = query_documents(query_text, top_k=3, source_filter=source_filter, channel="slack")
 
             if not results:
-                respond(f"No relevant documents found for: {user_question}")
+                filter_text = f" matching filter '{source_filter}'" if source_filter else ""
+                respond(f"No relevant documents found{filter_text} for: {query_text}")
                 return
 
             # Build context from search results
@@ -290,9 +318,9 @@ def create_app() -> App:
             ])
 
             # Generate answer using RAG
-            answer = answer_question(user_question, context)
+            answer = answer_question(query_text, context, source_filter=source_filter, channel="slack")
 
-            respond(f"*Q:* {user_question}\n\n*A:* {answer}")
+            respond(f"*Q:* {query_text}\n\n*A:* {answer}")
         except Exception as e:
             logger.error(f"Ask command error: {e}")
             respond(f"Error processing question: {str(e)[:100]}")
@@ -309,7 +337,7 @@ def create_app() -> App:
             respond(f"Searching for: *{search_query}*")
 
             # Query FAISS index
-            results = query_documents(search_query, top_k=5)
+            results = query_documents(search_query, top_k=5, channel="slack")
 
             if not results:
                 respond(f"No results found for: {search_query}")
@@ -345,11 +373,11 @@ def create_app() -> App:
             summary_prompt = f"Summarize these documents briefly: {', '.join(docs)}"
 
             # Query documents to get context
-            results = query_documents(summary_prompt, top_k=5)
+            results = query_documents(summary_prompt, top_k=5, channel="slack")
 
             if results:
                 context = "\n".join([r.get("text", "") for r in results])
-                summary = answer_question(summary_prompt, context)
+                summary = answer_question(summary_prompt, context, channel="slack")
             else:
                 summary = f"Indexed {len(docs)} documents: {', '.join(docs)}"
 

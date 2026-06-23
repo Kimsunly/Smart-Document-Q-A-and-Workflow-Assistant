@@ -2,6 +2,8 @@ import os
 import logging
 from pathlib import Path
 from typing import List
+import asyncio
+import time
 
 from telegram import Update
 from telegram.ext import (
@@ -12,28 +14,37 @@ from telegram.ext import (
     ContextTypes,
 )
 
-from automation.config import TELEGRAM_BOT_TOKEN
+from automation.config import TELEGRAM_BOT_TOKEN, META_DIR
 from automation.tasks import ingest_and_index_file
 from automation.utils import query_documents, answer_question
+import json
 
 logger = logging.getLogger(__name__)
 
-META_DIR = os.getenv("META_DIR", "data/index_meta")
 SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".txt"}
 
 
 def _recent_ingested_docs(limit: int = 8) -> List[str]:
-    """Get list of recently ingested documents."""
+    """Get list of recently ingested documents from Telegram."""
     ingest_files = sorted(
-        Path(META_DIR).glob("ingest_*.json"),
+        Path(META_DIR).glob("*.json"),
         key=lambda p: p.stat().st_mtime,
         reverse=True,
     )
     names = []
-    for path in ingest_files[:limit]:
-        stem = path.stem
-        parts = stem.split("_", 2)
-        names.append(parts[2] if len(parts) == 3 else stem)
+    for path in ingest_files:
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+            channel = meta.get("channel", "") or meta.get("doc_id", "")
+            if channel.startswith("telegram:"):
+                src_name = meta.get("source_name", "")
+                if src_name:
+                    names.append(src_name)
+                    if len(names) >= limit:
+                        break
+        except Exception:
+            continue
     return names
 
 
@@ -43,6 +54,7 @@ def _help_text() -> str:
         "📚 <b>Smart Document Q&A Bot - Available Commands</b>\n\n"
         "<b>Query Documents:</b>\n"
         "• /ask &lt;question&gt; - Ask a question about indexed documents\n"
+        "• /ask &lt;doc_name&gt; | &lt;question&gt; - Ask a question about a specific document only\n"
         "• /search &lt;topic&gt; - Search for topics/keywords (top 5 results)\n"
         "• /summarize - Generate summary of all indexed documents\n\n"
         "<b>Admin Commands:</b>\n"
@@ -51,7 +63,8 @@ def _help_text() -> str:
         "• /help - Show this help message\n\n"
         "<b>File Upload:</b>\n"
         "Send PDF, DOCX, or TXT files and they'll be automatically indexed.\n\n"
-        "<i>Tip: Use /ask, /search, /summarize with your query, e.g., /ask what is the daily schedule?</i>"
+        "<i>Tip: Use /ask, /search, /summarize with your query, e.g., /ask what is the daily schedule?</i>\n"
+        "<i>To query a specific file: /ask Daily Schedule | what is the schedule?</i>"
     )
 
 
@@ -110,15 +123,24 @@ async def cmd_ask(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     try:
+        # Check if user specified a document filter using the pipe "|" character
+        source_filter = None
+        if "|" in question:
+            parts = question.split("|", 1)
+            source_filter = parts[0].strip()
+            question = parts[1].strip()
+
+        filter_info = f" (filtered by: <i>{source_filter}</i>)" if source_filter else ""
         status_msg = await update.message.reply_text(
-            f"🔍 Searching documents for: <b>{question}</b>\n<i>Processing...</i>",
+            f"🔍 Searching documents for: <b>{question}</b>{filter_info}\n<i>Processing...</i>",
             parse_mode="HTML",
         )
 
-        results = query_documents(question, top_k=3)
+        results = query_documents(question, top_k=3, source_filter=source_filter, channel="telegram")
 
         if not results:
-            await status_msg.edit_text(f"No relevant documents found for: {question}")
+            filter_text = f" matching filter '{source_filter}'" if source_filter else ""
+            await status_msg.edit_text(f"No relevant documents found{filter_text} for: {question}")
             return
 
         context_text = "\n\n".join(
@@ -127,7 +149,7 @@ async def cmd_ask(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 for r in results
             ]
         )
-        answer = answer_question(question, context_text)
+        answer = answer_question(question, context_text, source_filter=source_filter, channel="telegram")
 
         response = f"<b>Q:</b> {question}\n\n<b>A:</b> {answer}"
         await status_msg.edit_text(response, parse_mode="HTML")
@@ -157,7 +179,7 @@ async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🔎 Searching for: <b>{search_query}</b>", parse_mode="HTML"
         )
 
-        results = query_documents(search_query, top_k=5)
+        results = query_documents(search_query, top_k=5, channel="telegram")
 
         if not results:
             await status_msg.edit_text(f"No results found for: {search_query}")
@@ -191,11 +213,11 @@ async def cmd_summarize(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         summary_prompt = f"Summarize these documents briefly: {', '.join(docs)}"
-        results = query_documents(summary_prompt, top_k=5)
+        results = query_documents(summary_prompt, top_k=5, channel="telegram")
 
         if results:
             context_text = "\n".join([r.get("text", "") for r in results])
-            summary = answer_question(summary_prompt, context_text)
+            summary = answer_question(summary_prompt, context_text, channel="telegram")
         else:
             summary = f"Indexed {len(docs)} documents: {', '.join(docs)}"
 
@@ -236,8 +258,9 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             bytes(file_bytes), file_name, source_name)
 
         await status_msg.edit_text(
-            f"✅ Queued <b>{file_name}</b> for indexing.\n"
-            f"Task ID: <code>{task.id}</code>",
+            f"⏳ <b>{file_name}</b> queued for indexing...\n"
+            f"Task ID: <code>{task.id}</code>\n"
+            f"<i>Initializing pipeline...</i>",
             parse_mode="HTML",
         )
 
@@ -247,6 +270,47 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             file_name,
             source_name,
         )
+
+        # Poll the Celery task status to show progress and completion
+        poll_interval = 1.0
+        max_wait = 90.0  # 90 seconds timeout
+        elapsed = 0.0
+
+        while not task.ready():
+            await asyncio.sleep(poll_interval)
+            elapsed += poll_interval
+
+            # Update the message every 3 seconds to show progress
+            if int(elapsed) % 3 == 0:
+                await status_msg.edit_text(
+                    f"⏳ Indexing <b>{file_name}</b>...\n"
+                    f"<i>Time elapsed: {int(elapsed)}s (OCR/parsing in progress)</i>",
+                    parse_mode="HTML"
+                )
+
+            if elapsed >= max_wait:
+                await status_msg.edit_text(
+                    f"⚠️ Indexing <b>{file_name}</b> is taking longer than expected.\n"
+                    f"It will continue in the background. Use /list_docs to check when it is ready.",
+                    parse_mode="HTML"
+                )
+                return
+
+        # Fetch result of the task
+        res = task.result
+        if isinstance(res, dict) and res.get("status") == "ok":
+            await status_msg.edit_text(
+                f"✅ Successfully indexed <b>{file_name}</b>!\n"
+                f"You can now ask questions about this document.",
+                parse_mode="HTML"
+            )
+        else:
+            error_msg = res.get("error", "Unknown processing error") if isinstance(res, dict) else str(res)
+            await status_msg.edit_text(
+                f"❌ Failed to index <b>{file_name}</b>.\n"
+                f"Error: <code>{error_msg}</code>",
+                parse_mode="HTML"
+            )
 
     except Exception as e:
         logger.error(f"Document upload error: {e}")

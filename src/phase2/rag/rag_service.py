@@ -25,10 +25,17 @@ def _build_context(chunks: List[Dict[str, Any]], max_chars: int = 3500) -> str:
         text = (c.get("text") or "").strip()
         block = f"[Source {i}] source={source} page={page} chunk_id={chunk_id}\n{text}\n"
         if used + len(block) > max_chars:
+            if not parts:
+                # If the first chunk is too large, truncate it to fit max_chars
+                overhead = len(block) - len(text) + 5
+                truncated_text = text[:max(0, max_chars - overhead)]
+                block = f"[Source {i}] source={source} page={page} chunk_id={chunk_id}\n{truncated_text}...\n"
+                parts.append(block)
             break
         parts.append(block)
         used += len(block)
     return "\n".join(parts)
+
 
 
 def build_grounding_prompt(question: str, chunks: List[Dict[str, Any]]) -> Tuple[str, str]:
@@ -316,10 +323,11 @@ def _extractive_fallback_answer(question: str, chunks: List[Dict[str, Any]], min
     return "I don't know"
 
 
-def _try_ollama_chat(prompt: str, timeout_sec: int) -> str:
+def _try_ollama_chat(prompt: str, timeout_sec: int, model: str = None) -> str:
     base_url = os.getenv(
         "OLLAMA_BASE_URL", "http://127.0.0.1:11434").strip().rstrip("/")
-    model = os.getenv("OLLAMA_MODEL", "llama3.2:3b").strip() or "llama3.2:3b"
+    if not model or model == "llama3 (local)":
+        model = os.getenv("OLLAMA_MODEL", "llama3.2:3b").strip() or "llama3.2:3b"
 
     url = f"{base_url}/api/generate"
 
@@ -364,6 +372,7 @@ def generate_rag_answer(
     retries: int = 2,
     timeout_sec: int = 20,
     rag_mode: str = "auto",
+    model: str = None,
 ) -> Dict[str, Any]:
     prompt, context = build_grounding_prompt(question, retrieved_chunks)
 
@@ -398,7 +407,7 @@ def generate_rag_answer(
     if use_ollama:
         for attempt in range(1, retries + 2):
             try:
-                answer = _try_ollama_chat(prompt, timeout_sec=timeout_sec)
+                answer = _try_ollama_chat(prompt, timeout_sec=timeout_sec, model=model)
                 provider = "ollama"
                 last_error = ""
                 break

@@ -1,0 +1,23 @@
+{
+  "file": "C:\\Users\\ADMIN\\AppData\\Local\\Temp\\digital_sample2.pdf",
+  "char_count": 16813,
+  "page_count": 5,
+  "zero_text_pages": 0,
+  "page_char_counts": [
+    4577,
+    4667,
+    2598,
+    2675,
+    2296
+  ],
+  "text_quality_score": 0.898,
+  "threshold": 100,
+  "classification": "digital",
+  "confidence": "high",
+  "processing_method": "text_extraction",
+  "success": true,
+  "mixed_pages": 0,
+  "source_name": "digital_sample2.pdf",
+  "channel": "google_drive",
+  "doc_id": "google_drive:digital_sample2.pdf"
+}
