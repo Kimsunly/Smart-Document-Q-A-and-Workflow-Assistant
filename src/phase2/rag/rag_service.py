@@ -38,8 +38,8 @@ def _build_context(chunks: List[Dict[str, Any]], max_chars: int = 3500) -> str:
 
 
 
-def build_grounding_prompt(question: str, chunks: List[Dict[str, Any]]) -> Tuple[str, str]:
-    context = _build_context(chunks)
+def build_grounding_prompt(question: str, chunks: List[Dict[str, Any]], max_chars: int = 3500) -> Tuple[str, str]:
+    context = _build_context(chunks, max_chars=max_chars)
     prompt = _build_answer_prompt(question, context)
     return prompt, context
 
@@ -60,6 +60,14 @@ def _is_overview_question(question: str) -> bool:
         r"\bmain points?\b",
         r"\brequirements?\b",
         r"\bassignment\b",
+        r"\bfull detail\b",
+        r"\bfull info\b",
+        r"\bdetail(?:s)? about\b",
+        r"\bcomprehensive\b",
+        r"\bexplain the whole\b",
+        r"\bsummarize\b",
+        r"\bsummarise\b",
+        r"\bwhat is in\b",
     )
     return any(re.search(pattern, q) for pattern in patterns)
 
@@ -68,14 +76,14 @@ def _build_answer_prompt(question: str, context: str) -> str:
     style_guide = (
         "Format the response in clean Markdown. Keep it concise, professional, and easy to review.\n"
         "Use short sections and bullets instead of long paragraphs.\n"
-        "If the answer is uncertain, say so briefly and do not invent details.\n"
+        "If the answer is uncertain, say so briefly.\n"
     )
 
     if _is_overview_question(question):
         return (
             "You are a professional document analyst. The user is asking for a summary or overview of the document.\n"
             "The context below is the uploaded document content. Do not say that no context or document was provided.\n"
-            "Use ONLY the provided context and do not invent details.\n"
+            "Use the provided context as the primary source. If needed, you may supplement it with your own general knowledge to define terms or add context.\n"
             f"{style_guide}\n"
             "Use this structure:\n"
             "## Summary\n"
@@ -83,31 +91,27 @@ def _build_answer_prompt(question: str, context: str) -> str:
             "## Key points\n"
             "- 3 to 5 concise bullets covering the main purpose, tasks, requirements, deadlines, tools, or topics.\n\n"
             "## What the user should do\n"
-            "- Only include this section if the document clearly contains an assignment, task, or instructions.\n"
-            "- Explain the next steps in simple language.\n\n"
+            "- Explain the next steps in simple language, supplemented with your knowledge if helpful.\n\n"
             "## Notes\n"
-            "- Mention anything that is unclear or not explicitly stated.\n\n"
+            "- Mention anything that is unclear or not explicitly stated in the document.\n\n"
             f"Question:\n{question}\n\n"
             f"Context:\n{context}\n\n"
             "Answer:"
         )
 
     return (
-        "You are a professional document QA assistant for uploaded files. Use ONLY the provided context to answer.\n"
-        "The context below is the uploaded document content. Do not claim the document or context is missing.\n"
+        "You are a professional document QA assistant. Use the provided context as your primary source of truth.\n"
+        "The context below is the uploaded document content.\n"
+        "If the user asks for explanations, tutorials, specific CLI commands, or details on how to perform/verify tasks mentioned in the document but not fully explained in the text, you SHOULD supplement the answer using your own general knowledge to guide them on how to do it. Clearly state when you are adding general knowledge steps.\n"
         f"{style_guide}\n"
         "Answer the user's question directly and professionally.\n"
-        "If the answer is not fully present, provide the best document-grounded response and clearly separate facts from uncertainty.\n"
-        "If the question is about an assignment, requirements, or how to do something, explain the steps the user should take\n"
-        "based on the document and mention any relevant tools, activities, or instructions.\n"
         "Use this structure:\n"
         "## Answer\n"
-        "- A short direct response first.\n\n"
-        "## Evidence\n"
-        "- 1 to 3 bullets showing what in the document supports the answer.\n\n"
-        "## Next step\n"
-        "- If the document suggests an action, explain the next step clearly.\n\n"
-        "Do not guess details that are not visible in the context.\n\n"
+        "- A short direct response based on the document and your general knowledge.\n\n"
+        "## Evidence from Document\n"
+        "- What the document explicitly states about this (if anything).\n\n"
+        "## Next step & How-To\n"
+        "- Provide actionable steps, commands, or explanations (using your general knowledge if not in the document) to guide the user on how to do it.\n\n"
         f"Question:\n{question}\n\n"
         f"Context:\n{context}\n\n"
         "Answer:"
@@ -374,7 +378,10 @@ def generate_rag_answer(
     rag_mode: str = "auto",
     model: str = None,
 ) -> Dict[str, Any]:
-    prompt, context = build_grounding_prompt(question, retrieved_chunks)
+    is_overview = _is_overview_question(question)
+    # Dynamically scale context limit (allow up to 16,000 characters for high-level/overview queries)
+    max_chars = 16000 if is_overview else 4500
+    prompt, context = build_grounding_prompt(question, retrieved_chunks, max_chars=max_chars)
 
     start = time.perf_counter()
     attempt = 0
@@ -471,3 +478,59 @@ def generate_rag_answer(
         "last_error": last_error_masked,
         "last_error_hint": hint,
     }
+
+
+def rewrite_query_with_history(
+    question: str,
+    history: List[Dict[str, Any]],
+    model: str = None,
+    timeout_sec: int = 10,
+) -> str:
+    """
+    Use the conversation history to rewrite a follow-up question into a standalone query.
+    If history is empty or LLM call fails, returns the original question.
+    """
+    if not history:
+        return question
+
+    # Format last 4 turns of history to keep it concise and context-rich
+    recent_history = history[-4:]
+    history_str = ""
+    for msg in recent_history:
+        sender = "User" if msg.get("sender") == "user" else "Assistant"
+        text = msg.get("text") or ""
+        history_str += f"{sender}: {text}\n"
+
+    prompt = (
+        "You are a search query optimizer. Given the following conversation history and a follow-up question, "
+        "rewrite the follow-up question into a standalone, search-optimized query. The rewritten query should contain "
+        "all necessary context (such as subject, lab name, document title, or nouns) mentioned in the conversation history.\n"
+        "Rules:\n"
+        "1. Do not answer the question.\n"
+        "2. Do not write any conversational preamble (like 'Here is the rewritten query:').\n"
+        "3. Output ONLY the rewritten standalone question.\n\n"
+        f"Conversation History:\n{history_str}\n"
+        f"Follow-up Question: {question}\n\n"
+        "Standalone Query:"
+    )
+
+    try:
+        api_key_present = bool(os.getenv("OPENAI_API_KEY", "").strip())
+        mode = os.getenv("RAG_MODE", "auto").strip().lower()
+
+        use_openai = (mode in {"openai", "api", "remote"}) or (mode == "auto" and api_key_present)
+        use_ollama = not use_openai
+
+        if use_ollama:
+            rewritten = _try_ollama_chat(prompt, timeout_sec=timeout_sec, model=model)
+        else:
+            rewritten = _try_openai_chat(prompt, timeout_sec=timeout_sec)
+
+        cleaned = rewritten.strip().strip('"\'')
+        if cleaned and len(cleaned) < 200 and not cleaned.lower().startswith("i don't know"):
+            return cleaned
+    except Exception:
+        pass
+
+    return question
+

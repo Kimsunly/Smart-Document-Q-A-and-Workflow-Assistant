@@ -71,6 +71,16 @@ def process_and_index_bytes(file_bytes: bytes, filename: str, source_name: str, 
     else:
         text, method, meta = router.route_pdf(
             str(tmp), apply_ocr=True, lang_mode=lang_mode)
+        
+        # Multi-Modal RAG: Extract and describe diagrams/tables in the PDF
+        try:
+            from document_processing.multi_modal import process_pdf_multimodal
+            diagram_chunks = process_pdf_multimodal(str(tmp), doc_id=filename)
+            if diagram_chunks:
+                text += "\n\n" + "\n\n".join([dc["text"] for dc in diagram_chunks])
+        except Exception as e:
+            print(f"Multi-modal extraction failed/skipped: {e}")
+
     tmp.unlink(missing_ok=True)
 
     doc_id = source_name or meta.get("file_id", filename)
@@ -108,6 +118,11 @@ def query_documents(question: str, top_k: int = 3, source_filter: str = None, ch
     Supports filtering by specific document names/metadata.
     Returns list of dicts with: {text, source, score, chunk_id, ...}
     """
+    # Dynamically increase retrieval size for high-level/overview questions
+    from phase2.rag.rag_service import _is_overview_question
+    if _is_overview_question(question):
+        top_k = max(20, top_k)
+
     try:
         target_path = get_index_path(source_filter, channel)
         mgr = _load_or_create_index(path=target_path)

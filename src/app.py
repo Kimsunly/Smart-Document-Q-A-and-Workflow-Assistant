@@ -1025,6 +1025,14 @@ def process_uploads_pipeline(uploaded_files, uploaded_images):
                         text, processing_method, metadata = router.route_pdf(
                             tmp_pdf_path, apply_ocr=True, lang_mode=lang_mode)
                     
+                    # Multi-Modal RAG: Extract and describe diagrams/tables in the PDF
+                    from document_processing.multi_modal import process_pdf_multimodal
+                    with st.spinner(f"Extracting and analyzing diagrams/tables from PDF..."):
+                        diagram_chunks = process_pdf_multimodal(tmp_pdf_path, doc_id=uploaded_file.name)
+                        if diagram_chunks:
+                            diagram_text = "\n\n" + "\n\n".join([dc["text"] for dc in diagram_chunks])
+                            text += diagram_text
+                    
                     if text.strip():
                         pending_docs.append({
                             "doc_id": "",
@@ -1289,9 +1297,22 @@ def render_ai_assistant_centerpiece():
 
                 start_time = time.time()
                 top_k_val = active_thread.get("top_k", 3)
+                selected_model = active_thread.get("model", "gpt-4o")
+                
+                # Conversational Query Rewriting: Rewrite follow-up query using history
+                from phase2.rag.rag_service import _is_overview_question, rewrite_query_with_history
+                search_query = rewrite_query_with_history(
+                    question_text, 
+                    active_thread.get("history", []), 
+                    model=selected_model
+                )
+                
+                # Dynamically increase retrieval size for high-level/overview questions
+                if _is_overview_question(search_query):
+                    top_k_val = max(20, top_k_val)
                 
                 with st.spinner("Retrieving relevant contexts and generating answer..."):
-                    retrieved_chunks = _semantic_retrieve(question_text, top_k=top_k_val, filter_docs=target_docs)
+                    retrieved_chunks = _semantic_retrieve(search_query, top_k=top_k_val, filter_docs=target_docs)
                     
                     if not retrieved_chunks:
                         ans_text = "No relevant documents found in the focus target directory. Make sure you select the correct target documents or sync the index."
@@ -1822,7 +1843,13 @@ def render_activity_timeline_section(activities):
 # -----------------------------
 # Main UI Execution Entrance
 # -----------------------------
-st.set_page_config(page_title="SmartDoc AI", page_icon="📄", layout="wide")
+# Resolve logo path relative to this file (src/app.py -> ../assets/logo.png)
+_LOGO_PATH = Path(__file__).parent.parent / "assets" / "logo.png"
+st.set_page_config(
+    page_title="SmartDoc AI",
+    page_icon=str(_LOGO_PATH) if _LOGO_PATH.exists() else "📄",
+    layout="wide"
+)
 
 _init_state()
 
@@ -2889,13 +2916,14 @@ _init_state()
 # -----------------------------
 # Sidebar Configuration Panel
 # -----------------------------
+# Show logo in sidebar if available
+_LOGO_PATH = Path(__file__).parent.parent / "assets" / "logo.png"
+if _LOGO_PATH.exists():
+    st.sidebar.image(str(_LOGO_PATH), use_container_width=True)
 st.sidebar.markdown("""
-<div style="padding:16px 0 18px 0;border-bottom:1px solid var(--border-soft);margin-bottom:18px;">
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
-        <span style="font-size:16px;">📄</span>
-        <span style="font-family:Outfit;font-size:15px;font-weight:700;color:var(--text-bright);letter-spacing:-0.02em;">SmartDoc AI</span>
-    </div>
-    <span style="background:rgba(124,58,237,0.12);color:#A78BFA;padding:2px 8px;border-radius:99px;font-size:9.5px;font-weight:600;letter-spacing:0.05em;border:1px solid rgba(124,58,237,0.2);">
+<div style="padding:8px 0 18px 0;border-bottom:1px solid var(--border-soft);margin-bottom:18px;text-align:center;">
+    <span style="font-family:Outfit;font-size:17px;font-weight:800;color:var(--text-bright);letter-spacing:-0.03em;">SmartDoc AI</span><br/>
+    <span style="background:rgba(124,58,237,0.12);color:#A78BFA;padding:2px 8px;border-radius:99px;font-size:9.5px;font-weight:600;letter-spacing:0.05em;border:1px solid rgba(124,58,237,0.2);display:inline-block;margin-top:4px;">
         DOCUMENT INTELLIGENCE
     </span>
 </div>
