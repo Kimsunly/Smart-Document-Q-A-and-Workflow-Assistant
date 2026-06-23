@@ -54,7 +54,7 @@ class FAISSIndexManager:
             query_vector.astype("float32"), k)
 
         results_metadata = [self.metadata[i]
-                            for i in indices[0] if i < len(self.metadata)]
+                            for i in indices[0] if 0 <= i < len(self.metadata)]
         return distances[0].tolist(), results_metadata
 
     def save(self, path: str):

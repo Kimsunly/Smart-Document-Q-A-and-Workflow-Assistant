@@ -14,6 +14,9 @@ REDIS_URL = os.getenv("AUTOMATION_REDIS_URL", "redis://localhost:6379/0")
 # FAISS index and metadata storage
 DATA_DIR = Path(os.getenv("AUTOMATION_DATA_DIR", str(BASE_DIR / "data")))
 FAISS_INDEX_PATH = DATA_DIR / "faiss" / "auto_index"
+FAISS_INDEX_PATH_SHARED = DATA_DIR / "faiss" / "shared_index"
+FAISS_INDEX_PATH_TELEGRAM = DATA_DIR / "faiss" / "telegram_index"
+FAISS_INDEX_PATH_SLACK = DATA_DIR / "faiss" / "slack_index"
 META_DIR = DATA_DIR / "index_meta"
 
 # Slack

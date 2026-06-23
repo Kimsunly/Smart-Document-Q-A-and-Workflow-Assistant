@@ -79,7 +79,10 @@ class PDFRouter:
             for i, page in enumerate(reader.pages):
                 try:
                     page_text = page.extract_text() or ""
-                    text += page_text
+                    if text and page_text:
+                        text += "\n\n" + page_text
+                    else:
+                        text += page_text
                     document_logger.debug(
                         f"Page {i+1}/{page_count}: extracted {len(page_text)} characters"
                     )
@@ -271,7 +274,10 @@ class PDFRouter:
                     # Extract text from image
                     cleaned_text, _, raw_text, confidence = extract_text_from_image(
                         temp_image_path, lang_mode=lang_mode)
-                    all_text += cleaned_text + "\n"
+                    if all_text and cleaned_text:
+                        all_text += "\n\n" + cleaned_text
+                    else:
+                        all_text += cleaned_text
 
                     document_logger.debug(
                         f"Page {i+1}: OCR confidence: {confidence:.1f}%, extracted {len(cleaned_text)} characters"
@@ -343,7 +349,10 @@ class PDFRouter:
                     # Combine text from all detections
                     page_text = "\n".join([detection[1]
                                           for detection in results])
-                    all_text += page_text + "\n"
+                    if all_text and page_text:
+                        all_text += "\n\n" + page_text
+                    else:
+                        all_text += page_text
 
                     # Calculate confidence
                     confidences = [detection[2] for detection in results]
