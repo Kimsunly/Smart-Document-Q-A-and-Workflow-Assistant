@@ -70,9 +70,10 @@ Ensure all local processes are up and running:
    * Click on **⚙️ System Config** in the sidebar.
    * Under **🧠 OCR Engine Parameters**, ensure Mixed language is set to **mixed (eng+khm)**.
    * Return to documents page and upload `data/images_for_ocr_test/kh_image_test.png`. Show the readable Khmer character translation and the **OCR Confidence Score** (e.g. `91.5%`).
-3. **Show Preprocessing Before/After Improvements**:
+3. **Show Preprocessing Before/After Improvements & Ink Threshold**:
    * Point to the **Binarization & Blue Pen Removal Preview** image on the screen.
-   * Open the `debug/tesseract/` directory in your IDE. Show the step-by-step images generated during preprocessing (`gray.png`, `clahe.png`, `binary.png`, etc.) which illustrate automatic skew correction (deskewing) and upscaling.
+   * Under **⚙️ System Config** -> **🧠 OCR Engine Parameters**, locate the **Khmer Blue Ink Threshold** slider (default: `18`). Explain that it is used to fine-tune handwriting extraction on ruled notebook paper.
+   * Open the `debug/tesseract/` directory in your IDE. Show the step-by-step images generated during preprocessing (`gray.png`, `clahe.png`, `binary.png`, etc.) which illustrate automatic skew correction (deskewing), upscaling, and blue ink stroke isolation.
 4. **Show Automatic Detection**:
    * Drag and drop a digital PDF (`data/pdfs/digital_sample1.pdf`). Point to status:
      `digital_sample1.pdf -> classification: digital | method: native_pdf | chars: 1006` (skips OCR).
@@ -81,7 +82,8 @@ Ensure all local processes are up and running:
 
 ### 🎤 Presentation Script Points (How to explain to your teacher):
 > * **On the Classifier**: "Teacher, to optimize performance and prevent heavy compute overhead on digital files, we built an automatic **PDF Router**. It inspects the binary stream to count native characters. If native characters are detected, it skips OCR entirely and extracts the text natively in milliseconds using `PyMuPDF`. If no native characters are found, it automatically routes the file to our OCR engine."
-> * **On Preprocessing**: "For scanned files and handwriting, standard OCR accuracy is low. To resolve this, we built a custom preprocessing pipeline. We convert the image to grayscale, use **CLAHE** to balance local contrast, auto-detect edges to correct the skew (skew correction), and apply a **binarization threshold filter**. If there is red notebook paper with blue ink margins, our threshold filter washes out the notebook lines, leaving only high-contrast text strokes for the Tesseract engine (`eng+khm`), significantly reducing our Character Error Rate (CER)."
+> * **On Preprocessing**: "For scanned files and handwriting, standard OCR accuracy is low. To resolve this, we built a custom preprocessing pipeline. We convert the image to grayscale, use **CLAHE** to balance local contrast, auto-detect edges to correct the skew (skew correction), and apply a **binarization threshold filter**."
+> * **On Khmer Ink Threshold (Blue Pen Isolation)**: "For Khmer handwritten notes, we designed a custom preprocessing stage called `khmer_ink_variant()`. Since handwriting is commonly done in blue ink on red-ruled notebook paper, we split the color channels into Blue, Green, and Red. By subtracting the maximum of the Red and Green channels from the Blue channel (`cv2.subtract(b, max(r,g))`), we completely isolate the blue ink strokes while erasing any red notebook grid lines, background paper patterns, or yellowing stains. The **Ink Threshold** slider (default `18`) defines the binary threshold cutoff: pixels with blue-isolation values higher than this threshold are classified as text strokes, and everything else becomes a clean white background. This generates a high-contrast black-text-on-white image that boosts Tesseract's recognition accuracy drastically."
 
 ---
 
@@ -130,7 +132,7 @@ Ensure all local processes are up and running:
 ---
 
 ## 💡 STEP 5: RAG (Retrieval‑Augmented Generation)
-*Goal: Demonstrate strict document grounding and fallback guardrails.*
+*Goal: Demonstrate strict document grounding, conversational memory, multi-modal diagram support, and fallback guardrails.*
 
 ### 🛠️ What to Demo:
 1. **Show Grounded Answer**:
@@ -138,11 +140,21 @@ Ensure all local processes are up and running:
 2. **Show "I don't know" Guardrail**:
    * Ask a question outside the document context (e.g. *"What is the capital of Cambodia?"*).
    * Show that the model returns a polite *"I don't know"* message, proving it doesn't hallucinate.
-3. **Show Telemetry Logs**:
+3. **Show Conversational Query Rewriting (Multi-turn Chat)**:
+   * Ask: *"Tell me about Lab 1"*
+   * Follow up immediately with: *"What is the main goal?"*
+   * Point out that even though your follow-up didn't name "Lab 1", the system used the chat history to automatically rewrite the vector search query to *"What is the main goal of Lab 1?"*, fetching the correct chunks.
+4. **Show Multi-Modal Diagram & Table Parsing**:
+   * Upload a PDF that contains a network topology diagram or a table.
+   * Point out that during upload, the backend uses `fitz` (PyMuPDF) to extract embedded images, calls a local lightweight vision model (`moondream`) via Ollama, and appends the detailed diagram description text directly to the document context to index it.
+   * Ask: *"Which switch connects to R2?"* or *"Describe the topology diagram on page 1."* Show the LLM answering correctly using the indexed diagram summary.
+5. **Show Telemetry Logs**:
    * Point out the latency (e.g. `2.6s`) and cost telemetry logs under the response bubble.
 
 ### 🎤 Presentation Script Points (How to explain to your teacher):
-> * "We feed the retrieved chunks into a **grounding prompt** that forces the LLM to strictly base its answer on the provided text. If the information isn't in the chunks, the prompt forces the model to respond with 'I don't know'. We also calculate cost metrics and log search latencies. If the FAISS similarity score of the top chunk falls below our `RAG_FALLBACK_MIN_SCORE` threshold, the system immediately returns the extractive fallback answer without calling the LLM to prevent hallucinations and save cost."
+> * **On Grounding**: "We feed the retrieved chunks into a **grounding prompt** that forces the LLM to strictly base its answer on the provided text. If the similarity score falls below `RAG_FALLBACK_MIN_SCORE`, it falls back to an extractive parser to prevent hallucinations."
+> * **On Conversational Query Rewriting**: "To support natural multi-turn conversations, we built a Conversational Query Rewriting layer. If the user asks a follow-up question like 'how do I do step 2?', our backend passes the question and recent chat history to the LLM to rewrite it into a standalone query like 'How do I verify the MAC-based VLAN configuration in Lab 1?'. This rewritten query is used to search FAISS, ensuring we retrieve the correct context for conversational follow-ups."
+> * **On Multi-Modal RAG (Diagram Parsing)**: "In addition, real-world document systems must understand visual content like network diagrams or tables. We implemented a Multi-Modal RAG feature: during PDF ingestion, we extract embedded images using PyMuPDF. We pass these images to a local lightweight vision model (`moondream`) via Ollama to generate a detailed text description. These descriptions are appended as searchable text chunks in our FAISS database, allowing the Q&A system to answer questions about diagrams and topologies."
 
 ---
 
@@ -241,3 +253,20 @@ During the live demo, make sure to walk through this exact checklist:
 Conclude your project presentation by showing this high-impact summary to your teacher:
 
 > **"In Phase 2, I built a complete intelligent OCR ➔ RAG ➔ automation pipeline that can extract text (English & Khmer), index documents, answer questions, export structured data, and automatically ingest files from cloud storage or messaging apps."**
+
+---
+
+## 🛠️ STEP 11: Conversational Rewriting & Multi-Modal RAG Setup
+
+During development, the following execution steps were run to build, configure, and verify the advanced features:
+
+1. **Verify Dependency Support**: Checked for `pymupdf` (`fitz`) image extraction library presence in the pipeline.
+2. **Local Vision Model Pull**: Started `ollama pull moondream` to download the lightweight 860 MB vision model for local image/diagram descriptions.
+3. **Conversational Memory Integration**:
+   * Implemented `rewrite_query_with_history` in `src/phase2/rag/rag_service.py`.
+   * Modified the Streamlit Q&A submit block in `src/app.py` to rewrite queries with conversation history before retrieving from FAISS.
+4. **Multi-Modal Parsing Pipeline**:
+   * Created `src/document_processing/multi_modal.py` to handle PyMuPDF image extraction and Ollama base64 image queries.
+   * Updated the Streamlit upload pipeline in `src/app.py` to dynamically extract and append diagram descriptions to PDF contents.
+   * Updated the background automation pipeline in `src/automation/utils.py` to run multi-modal parsing on files uploaded via Google Drive, Telegram, or Slack.
+5. **Code Syntax Verification**: Compiled modified files (`app.py`, `utils.py`, `multi_modal.py`) using `py_compile` to ensure 100% syntactical correctness.

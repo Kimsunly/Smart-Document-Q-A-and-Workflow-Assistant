@@ -1,0 +1,19 @@
+{
+  "file": "C:\\Users\\ADMIN\\AppData\\Local\\Temp\\scanned_sample1.pdf",
+  "char_count": 0,
+  "page_count": 1,
+  "zero_text_pages": 1,
+  "page_char_counts": [
+    0
+  ],
+  "text_quality_score": 0.0,
+  "threshold": 100,
+  "classification": "scanned",
+  "confidence": "high",
+  "processing_method": "ocr_pytesseract",
+  "success": true,
+  "mixed_pages": 1,
+  "source_name": "scanned_sample1.pdf",
+  "channel": "google_drive",
+  "doc_id": "google_drive:scanned_sample1.pdf"
+}

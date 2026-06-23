@@ -1,0 +1,26 @@
+{
+  "file": "C:\\Users\\ADMIN\\AppData\\Local\\Temp\\Midterm-doc.pdf",
+  "char_count": 394,
+  "page_count": 7,
+  "zero_text_pages": 1,
+  "page_char_counts": [
+    90,
+    37,
+    17,
+    20,
+    32,
+    0,
+    34
+  ],
+  "text_quality_score": 0.691,
+  "threshold": 100,
+  "classification": "scanned",
+  "confidence": "high",
+  "processing_method": "mixed_text_plus_ocr",
+  "success": true,
+  "mixed_pages": 1,
+  "text_pages": 6,
+  "source_name": "Midterm-doc.pdf",
+  "channel": "google_drive",
+  "doc_id": "google_drive:Midterm-doc.pdf"
+}
